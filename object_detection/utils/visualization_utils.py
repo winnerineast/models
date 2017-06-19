@@ -156,7 +156,10 @@ def draw_bounding_box_on_image(image,
     (left, right, top, bottom) = (xmin, xmax, ymin, ymax)
   draw.line([(left, top), (left, bottom), (right, bottom),
              (right, top), (left, top)], width=thickness, fill=color)
-  font = ImageFont.load_default()
+  try:
+    font = ImageFont.truetype('arial.ttf', 24)
+  except IOError:
+    font = ImageFont.load_default()
 
   text_bottom = top
   # Reverse list and print from bottom to top.
@@ -395,7 +398,7 @@ def visualize_boxes_and_labels_on_image_array(image,
               classes[i] % len(STANDARD_COLORS)]
 
   # Draw all boxes onto image.
-  for box, color in box_to_color_map.iteritems():
+  for box, color in six.iteritems(box_to_color_map):
     ymin, xmin, ymax, xmax = box
     if instance_masks is not None:
       draw_mask_on_image_array(
