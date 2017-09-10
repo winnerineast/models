@@ -163,7 +163,56 @@ dataset = flowers.get_split('validation', DATA_DIR)
 provider = slim.dataset_data_provider.DatasetDataProvider(dataset)
 [image, label] = provider.get(['image', 'label'])
 ```
+## An automated script for processing ImageNet data.
 
+Training a model with the ImageNet dataset is a common request. To facilitate
+working with the ImageNet dataset, we provide an automated script for
+downloading and processing the ImageNet dataset into the native TFRecord
+format.
+
+The TFRecord format consists of a set of sharded files where each entry is a serialized `tf.Example` proto. Each `tf.Example` proto contains the ImageNet image (JPEG encoded) as well as metadata such as label and bounding box information.
+
+We provide a single [script](datasets/download_and_preprocess_imagenet.sh) for
+downloading and converting ImageNet data to TFRecord format. Downloading and
+preprocessing the data may take several hours (up to half a day) depending on
+your network and computer speed. Please be patient.
+
+To begin, you will need to sign up for an account with [ImageNet]
+(http://image-net.org) to gain access to the data. Look for the sign up page,
+create an account and request an access key to download the data.
+
+After you have `USERNAME` and `PASSWORD`, you are ready to run our script. Make
+sure that your hard disk has at least 500 GB of free space for downloading and
+storing the data. Here we select `DATA_DIR=$HOME/imagenet-data` as such a
+location but feel free to edit accordingly.
+
+When you run the below script, please enter *USERNAME* and *PASSWORD* when
+prompted. This will occur at the very beginning. Once these values are entered,
+you will not need to interact with the script again.
+
+```shell
+# location of where to place the ImageNet data
+DATA_DIR=$HOME/imagenet-data
+
+# build the preprocessing script.
+bazel build slim/download_and_preprocess_imagenet
+
+# run it
+bazel-bin/slim/download_and_preprocess_imagenet "${DATA_DIR}"
+```
+
+The final line of the output script should read:
+
+```shell
+2016-02-17 14:30:17.287989: Finished writing all 1281167 images in data set.
+```
+
+When the script finishes you will find 1024 and 128 training and validation
+files in the `DATA_DIR`. The files will match the patterns `train-????-of-1024`
+and `validation-?????-of-00128`, respectively.
+
+[Congratulations!](https://www.youtube.com/watch?v=9bZkp7q19f0) You are now
+ready to train or evaluate with the ImageNet data set.
 
 # Pre-trained Models
 <a id='Pretrained'></a>
@@ -213,7 +262,7 @@ Model | TF-Slim File | Checkpoint | Top-1 Accuracy| Top-5 Accuracy |
 ^ ResNet V2 models use Inception pre-processing and input image size of 299 (use
 `--preprocessing_name inception --eval_image_size 299` when using
 `eval_image_classifier.py`). Performance numbers for ResNet V2 models are
-reported on ImageNet valdiation set.
+reported on the ImageNet validation set.
 
 All 16 MobileNet Models reported in the [MobileNet Paper](https://arxiv.org/abs/1704.04861) can be found [here](https://github.com/tensorflow/models/tree/master/slim/nets/mobilenet_v1.md).
 
@@ -256,6 +305,17 @@ and/or multiple CPUs, either synchrononously or asynchronously.
 See [model_deploy](https://github.com/tensorflow/models/blob/master/slim/deployment/model_deploy.py)
 for details.
 
+### TensorBoard
+
+To visualize the losses and other metrics during training, you can use
+[TensorBoard](https://github.com/tensorflow/tensorboard)
+by running the command below.
+
+```shell
+tensorboard --logdir=${TRAIN_DIR}
+```
+
+Once TensorBoard is running, navigate your web browser to http://localhost:6006.
 
 # Fine-tuning a model from an existing checkpoint
 <a id='Tuning'></a>
@@ -392,8 +452,7 @@ bazel-bin/tensorflow/examples/label_image/label_image \
   --graph=/tmp/frozen_inception_v3.pb \
   --labels=/tmp/imagenet_slim_labels.txt \
   --input_mean=0 \
-  --input_std=255 \
-  --logtostderr
+  --input_std=255
 ```
 
 
