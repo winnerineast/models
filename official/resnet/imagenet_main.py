@@ -167,7 +167,8 @@ def input_fn(is_training,
              datasets_num_private_threads=None,
              num_parallel_batches=1,
              parse_record_fn=parse_record,
-             input_context=None):
+             input_context=None,
+             drop_remainder=False):
   """Input function which provides batches for train or eval.
 
   Args:
@@ -181,6 +182,8 @@ def input_fn(is_training,
     parse_record_fn: Function to use for parsing the records.
     input_context: A `tf.distribute.InputContext` object passed in by
       `tf.distribute.Strategy`.
+    drop_remainder: A boolean indicates whether to drop the remainder of the
+      batches. If True, the batch dimension will be static.
 
   Returns:
     A dataset that can be used for iteration.
@@ -217,7 +220,8 @@ def input_fn(is_training,
       num_epochs=num_epochs,
       dtype=dtype,
       datasets_num_private_threads=datasets_num_private_threads,
-      num_parallel_batches=num_parallel_batches
+      num_parallel_batches=num_parallel_batches,
+      drop_remainder=drop_remainder
   )
 
 
@@ -343,9 +347,10 @@ def imagenet_model_fn(features, labels, mode, params):
   )
 
 
-def define_imagenet_flags():
+def define_imagenet_flags(dynamic_loss_scale=False):
   resnet_run_loop.define_resnet_flags(
-      resnet_size_choices=['18', '34', '50', '101', '152', '200'])
+      resnet_size_choices=['18', '34', '50', '101', '152', '200'],
+      dynamic_loss_scale=dynamic_loss_scale)
   flags.adopt_module_key_flags(resnet_run_loop)
   flags_core.set_defaults(train_epochs=90)
 
