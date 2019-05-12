@@ -419,16 +419,14 @@ def resnet_model_fn(features, labels, mode, model_class,
     return 'batch_normalization' not in name
   loss_filter_fn = loss_filter_fn or exclude_batch_norm
 
-  # Add weight decay to the loss. We need to scale the regularization loss
-  # manually as losses other than in tf.losses and tf.keras.losses don't scale
-  # automatically.
+  # Add weight decay to the loss.
   l2_loss = weight_decay * tf.add_n(
       # loss is computed using fp32 for numerical stability.
       [
           tf.nn.l2_loss(tf.cast(v, tf.float32))
           for v in tf.compat.v1.trainable_variables()
           if loss_filter_fn(v.name)
-      ]) / tf.distribute.get_strategy().num_replicas_in_sync
+      ])
   tf.compat.v1.summary.scalar('l2_loss', l2_loss)
   loss = cross_entropy + l2_loss
 
@@ -453,6 +451,11 @@ def resnet_model_fn(features, labels, mode, model_class,
           momentum=momentum
       )
 
+    fp16_implementation = getattr(flags.FLAGS, 'fp16_implementation', None)
+    if fp16_implementation == 'graph_rewrite':
+      optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(
+          optimizer, loss_scale=loss_scale)
+
     def _dense_grad_filter(gvs):
       """Only apply gradient updates to the final layer.
 
@@ -465,7 +468,7 @@ def resnet_model_fn(features, labels, mode, model_class,
       """
       return [(g, v) for g, v in gvs if 'dense' in v.name]
 
-    if loss_scale != 1:
+    if loss_scale != 1 and fp16_implementation != 'graph_rewrite':
       # When computing fp16 gradients, often intermediate tensor values are
       # so small, they underflow to 0. To avoid this, we multiply the loss by
       # loss_scale to make these tensor values loss_scale times bigger.
@@ -527,8 +530,9 @@ def resnet_main(
     shape: list of ints representing the shape of the images used for training.
       This is only used if flags_obj.export_dir is passed.
 
-  Returns:
-    Dict of results of the run.
+  Dict of results of the run.  Contains the keys `eval_results` and
+    `train_hooks`. `eval_results` contains accuracy (top_1) and accuracy_top_5.
+    `train_hooks` is a list the instances of hooks used during training.
   """
 
   model_helpers.apply_clean(flags.FLAGS)
@@ -552,7 +556,8 @@ def resnet_main(
       distribution_strategy=flags_obj.distribution_strategy,
       num_gpus=flags_core.get_num_gpus(flags_obj),
       num_workers=num_workers,
-      all_reduce_alg=flags_obj.all_reduce_alg)
+      all_reduce_alg=flags_obj.all_reduce_alg,
+      num_packs=flags_obj.num_packs)
 
   # Creates a `RunConfig` that checkpoints every 24 hours which essentially
   # results in checkpoints determined only by `epochs_between_evals`.
@@ -608,7 +613,7 @@ def resnet_main(
     return input_function(
         is_training=True,
         data_dir=flags_obj.data_dir,
-        batch_size=distribution_utils.per_device_batch_size(
+        batch_size=distribution_utils.per_replica_batch_size(
             flags_obj.batch_size, flags_core.get_num_gpus(flags_obj)),
         num_epochs=num_epochs,
         dtype=flags_core.get_tf_dtype(flags_obj),
@@ -620,7 +625,7 @@ def resnet_main(
     return input_function(
         is_training=False,
         data_dir=flags_obj.data_dir,
-        batch_size=distribution_utils.per_device_batch_size(
+        batch_size=distribution_utils.per_replica_batch_size(
             flags_obj.batch_size, flags_core.get_num_gpus(flags_obj)),
         num_epochs=1,
         dtype=flags_core.get_tf_dtype(flags_obj))
@@ -628,21 +633,19 @@ def resnet_main(
   train_epochs = (0 if flags_obj.eval_only or not flags_obj.train_epochs else
                   flags_obj.train_epochs)
 
-  use_train_and_evaluate = flags_obj.use_train_and_evaluate or (
-      distribution_strategy.__class__.__name__ in [
-          'CollectiveAllReduceStrategy', 'MultiWorkerMirroredStrategy'])
+  use_train_and_evaluate = flags_obj.use_train_and_evaluate or num_workers > 1
   if use_train_and_evaluate:
     train_spec = tf.estimator.TrainSpec(
         input_fn=lambda input_context=None: input_fn_train(
             train_epochs, input_context=input_context),
         hooks=train_hooks,
         max_steps=flags_obj.max_train_steps)
-    eval_spec = tf.estimator.EvalSpec(input_fn=input_fn_eval,
-                                      steps=flags_obj.max_train_steps)
+    eval_spec = tf.estimator.EvalSpec(input_fn=input_fn_eval)
     tf.compat.v1.logging.info('Starting to train and evaluate.')
-    eval_results, _ = tf.estimator.train_and_evaluate(classifier, train_spec,
-                                                      eval_spec)
-    benchmark_logger.log_evaluation_result(eval_results)
+    tf.estimator.train_and_evaluate(classifier, train_spec, eval_spec)
+    # tf.estimator.train_and_evalute doesn't return anything in multi-worker
+    # case.
+    return {}
   else:
     if train_epochs == 0:
       # If --eval_only is set, perform a single loop with zero train epochs.
@@ -710,14 +713,17 @@ def resnet_main(
   return stats
 
 
-def define_resnet_flags(resnet_size_choices=None, dynamic_loss_scale=False):
+def define_resnet_flags(resnet_size_choices=None, dynamic_loss_scale=False,
+                        fp16_implementation=False):
   """Add flags and validators for ResNet."""
   flags_core.define_base()
   flags_core.define_performance(num_parallel_calls=False,
                                 tf_gpu_thread_mode=True,
                                 datasets_num_private_threads=True,
                                 datasets_num_parallel_batches=True,
-                                dynamic_loss_scale=dynamic_loss_scale)
+                                dynamic_loss_scale=dynamic_loss_scale,
+                                fp16_implementation=fp16_implementation,
+                                loss_scale=True)
   flags_core.define_image()
   flags_core.define_benchmark()
   flags.adopt_module_key_flags(flags_core)
