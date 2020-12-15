@@ -31,3 +31,10 @@ https://scholar.googleusercontent.com/scholar.bib?q=info:rLqvkztmWYgJ:scholar.go
 * masonliuw@gmail.com
 * yinxiao@google.com
 * menglong@google.com
+* yongzhe@google.com
+* lzyuan@google.com
+
+
+## Table of Contents
+
+  * <a href='g3doc/exporting_models.md'>Exporting a trained model</a>
